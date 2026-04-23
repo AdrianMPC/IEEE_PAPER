@@ -163,7 +163,7 @@ def enrich_yolo_results(
                 "ipc_basis":                 meta.get("ipc_basis", "Nonconforming"),
                 "description":               meta.get("description", "No description available"),
                 "engineering_justification": meta.get("engineering_justification", "Manual review required"),
-                "ipc_reference":             "IPC-A-600M",
+                "ipc_reference":             "IPC-A-600",
 
                 "location": {
                     "zone":        location_zone,
@@ -239,11 +239,11 @@ def build_endpoint_payload(
             "severity": str(defect.get("severity", "UNKNOWN")).upper(),
             "defect_class": normalize_endpoint_defect_class(defect.get("defect_type", "")),
             "confidence": round(float(defect.get("confidence", 0.0)), 3),
-            "location": location_obj["zone"],
-            "width_mm": dimensions["width_mm"],
-            "height_mm": dimensions["height_mm"],
-            "area_mm2": dimensions["area_mm2"],
-            "reference": defect["ipc_reference"],
+            "location": location_obj.get("zone", "unknown"),
+            "width_mm": dimensions.get("width_mm"),
+            "height_mm": dimensions.get("height_mm"),
+            "area_mm2": dimensions.get("area_mm2"),
+            "reference": defect.get("ipc_reference", standard_target),
         })
 
     return {
@@ -255,10 +255,10 @@ def build_endpoint_payload(
     }
 
 def build_delivery_payload(
-    endpoint_payload: dict,
+    inspection_payload: dict,
     annotated_image_path: str | None = None,
 ) -> dict:
     return {
         "annotated_image_path": annotated_image_path,
-        "inspection_payload": endpoint_payload,
+        "inspection_payload": inspection_payload,
     }

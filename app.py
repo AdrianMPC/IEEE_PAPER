@@ -280,6 +280,9 @@ st.subheader("🚀 Enviar al endpoint")
 if not endpoint_url:
     st.info("Configura la URL del endpoint en el sidebar para habilitar el envío.")
 else:
+    if not pcb_dims_known:
+        st.warning("⚠️ Las dimensiones físicas no están definidas. El payload enviará `width_mm`, `height_mm` y `area_mm2` como `null`.")
+
     # Pregunta opcional al RAG antes de enviar
     user_question = st.text_input(
         "Pregunta para el RAG (opcional)",
