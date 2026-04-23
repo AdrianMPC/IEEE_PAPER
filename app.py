@@ -1,6 +1,10 @@
-import streamlit as st
+"""
+PCB Image Uploader
+"""
+import os
 from pathlib import Path
 from datetime import datetime
+import streamlit as st
 
 UPLOAD_DIR = Path("uploaded_images")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -34,3 +38,11 @@ else:
     for i, img_path in enumerate(images):
         with cols[i % 3]:
             st.image(str(img_path), caption=img_path.name, use_container_width=True)
+
+            if st.button("🗑️ Delete", key=f"btn_{img_path.name}", use_container_width=True):
+                try:
+                    os.remove(img_path)
+                    st.toast(f"Deleted: {img_path.name}")
+                    st.rerun()
+                except (OSError, PermissionError) as e:
+                    st.error(f"Error: {e}")
