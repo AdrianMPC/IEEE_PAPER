@@ -38,6 +38,19 @@ IMAGE_H_PX           = YOLO_IMGSZ
 # 3 = Alta confiabilidad (aeroespacial, médico, militar)
 IPC_CLASS = 2
 
+# ─── Mapeo de Clases Reales del Modelo YOLO ────────────────────────────────────
+YOLO_CLASS_NAMES = {
+    0: 'Short',
+    1: 'Spur',
+    2: 'Spurious Copper',
+    3: 'Open Circuit',
+    4: 'Mouse Bite',
+    5: 'Hole Breakout',
+    6: 'Conductor Scratch',
+    7: 'Conductor Foreign Object',
+    8: 'Base Material Foreign Object'
+}
+
 # ─── Metadatos normativos IPC-A-600M ─────────────────────────────────────────
 DEFECT_METADATA = {
     "Short": {

@@ -103,9 +103,9 @@ def load_model(model_path: str = config.MODEL_PATH):
     model       = YOLO(model_path)
     model.to(device)
     class_names = load_class_names()
-    # Si el yaml no cargó clases, usar las del propio modelo
+    # Si el yaml no cargó clases, usar el mapeo real de config o las del propio modelo
     if not class_names:
-        class_names = dict(model.names)
+        class_names = getattr(config, "YOLO_CLASS_NAMES", dict(model.names))
     return model, device, class_names
 
 
