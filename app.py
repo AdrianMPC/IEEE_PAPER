@@ -6,10 +6,11 @@ import json
 import streamlit as st
 
 import config
-from inference       import load_model, run_inference, get_annotated_image, save_annotated_image
-from payload_builder import enrich_yolo_results
+from inference       import ensure_model_exists, load_model, run_inference, get_annotated_image, save_annotated_image
+from payload_builder import enrich_yolo_results, build_endpoint_payload
 from rag_utils       import build_rag_prompt
 from utils           import save_uploaded_image, save_payload_json, save_rag_prompt, generate_pcb_id
+from api_client      import send_to_endpoint
 
 
 # ─── Configuración de página ──────────────────────────────────────────────────
@@ -19,7 +20,14 @@ st.set_page_config(
     layout="wide",
 )
 
-# ─── Carga del modelo (cacheado: se carga una sola vez) ───────────────────────
+# ─── Ajuste 3: verificar / descargar modelo antes de cargarlo ─────────────────
+try:
+    ensure_model_exists()
+except (FileNotFoundError, RuntimeError, ImportError) as e:
+    st.error(f"⚠️ Modelo no disponible:\n\n{e}")
+    st.stop()
+
+# ─── Carga del modelo (cacheado: se carga una sola vez por sesión) ────────────
 @st.cache_resource
 def get_model():
     with st.spinner("Cargando modelo YOLO..."):
@@ -35,7 +43,7 @@ with st.sidebar:
         "Clase IPC del producto",
         options=[1, 2, 3],
         index=config.IPC_CLASS - 1,
-        help="1=Consumo general | 2=Industrial | 3=Alta confiabilidad",
+        help="1 = Consumo general | 2 = Industrial | 3 = Alta confiabilidad",
     )
 
     conf_threshold = st.slider(
@@ -50,16 +58,44 @@ with st.sidebar:
         value=config.YOLO_IOU, step=0.05,
     )
 
+    st.markdown("---")
+    st.subheader("📐 Dimensiones físicas de la PCB")
+
     pcb_dims_known = st.checkbox(
-        "¿Conoces las dimensiones físicas de la PCB?",
+        "¿Conoces las dimensiones reales?",
         value=config.PCB_DIMENSIONS_KNOWN,
+        help="Si activas esto, el sistema convertirá píxeles a milímetros.",
     )
 
     if pcb_dims_known:
-        pcb_w = st.number_input("Ancho PCB (mm)", value=config.PCB_WIDTH_MM, step=1.0)
-        pcb_h = st.number_input("Alto PCB (mm)",  value=config.PCB_HEIGHT_MM, step=1.0)
+        # Ajuste 1: pcb_w y pcb_h se pasan directamente a enrich_yolo_results
+        pcb_w = st.number_input("Ancho PCB (mm)", value=config.PCB_WIDTH_MM, step=1.0, min_value=1.0)
+        pcb_h = st.number_input("Alto PCB (mm)",  value=config.PCB_HEIGHT_MM, step=1.0, min_value=1.0)
     else:
-        pcb_w = pcb_h = None
+        pcb_w = config.PCB_WIDTH_MM   # valor por default, no se usará en cálculos
+        pcb_h = config.PCB_HEIGHT_MM
+
+    st.markdown("---")
+    st.subheader("🌐 Endpoint del equipo")
+
+    endpoint_url = st.text_input(
+        "URL del endpoint",
+        value="",
+        placeholder="https://api.equipo.com/inspect",
+        help="URL a la que se enviará el payload al hacer clic en 'Enviar al endpoint'.",
+    )
+
+    board_side = st.selectbox(
+        "Cara de la PCB",
+        options=["top", "bottom"],
+        index=0,
+    )
+
+    product_class = st.text_input(
+        "Clase del producto",
+        value="unknown",
+        help="Identificador del tipo de producto que inspecciona el equipo.",
+    )
 
     st.markdown("---")
     st.caption(f"Modelo: `{config.MODEL_PATH}`")
@@ -70,7 +106,7 @@ with st.sidebar:
 st.title("🔬 PCB Defect Inspector")
 st.markdown(
     "Sube una imagen de PCB para detectar defectos, "
-    "generar el payload JSON enriquecido y el prompt para el RAG Chatbot."
+    "generar el payload enriquecido y enviarlo al endpoint del equipo."
 )
 
 # ─── Upload de imagen ─────────────────────────────────────────────────────────
@@ -86,7 +122,7 @@ if uploaded_file is None:
 # ─── Procesamiento ────────────────────────────────────────────────────────────
 with st.spinner("Procesando imagen..."):
 
-    # 1. Guardar imagen subida
+    # 1. Guardar imagen subida en disco
     image_path = save_uploaded_image(uploaded_file)
     pcb_id     = generate_pcb_id(uploaded_file.name)
 
@@ -97,24 +133,19 @@ with st.spinner("Procesando imagen..."):
         iou=iou_threshold,
     )
 
-    # 3. Imagen anotada
+    # 3. Imagen anotada (RGB para st.image + BGR guardada en disco)
     annotated_rgb  = get_annotated_image(results)
     annotated_path = save_annotated_image(results, pcb_id)
 
-    # 4. Payload enriquecido
-    # Reconstruir px_to_mm si el usuario cambió las dimensiones
-    pcb_config_override = {}
-    if pcb_dims_known and pcb_w and pcb_h:
-        pcb_config_override = dict(
-            pcb_width_mm=pcb_w,
-            pcb_height_mm=pcb_h,
-        )
-
+    # 4. Payload interno enriquecido
+    # Ajuste 1: pcb_w y pcb_h de la UI llegan correctamente aquí
     payload = enrich_yolo_results(
         results,
         class_names=class_names,
         image_id=pcb_id,
         pcb_dimensions_known=pcb_dims_known,
+        pcb_width_mm=pcb_w,
+        pcb_height_mm=pcb_h,
         annotated_image_path=annotated_path,
     )
 
@@ -122,27 +153,36 @@ with st.spinner("Procesando imagen..."):
     rag_prompt = build_rag_prompt(payload, ipc_class=ipc_class)
 
     # 6. Guardar en disco
-    json_path   = save_payload_json(payload, pcb_id)
-    prompt_path = save_rag_prompt(rag_prompt, pcb_id)
+    save_payload_json(payload, pcb_id)
+    save_rag_prompt(rag_prompt, pcb_id)
+
+    # 7. Payload para el endpoint (Ajuste 2)
+    endpoint_payload = build_endpoint_payload(
+        internal_payload=payload,
+        standard_target="IPC-A-600",
+        product_class=product_class,
+        board_side=board_side,
+        user_question=None,
+    )
 
 
 # ─── Resultados ───────────────────────────────────────────────────────────────
 status = payload["overall_status"]
 STATUS_COLORS = {
-    "REJECT":           "🔴",
-    "REVIEW":           "🟡",
-    "ACCEPT_WITH_NOTES":"🟠",
-    "ACCEPT":           "🟢",
+    "REJECT":            "🔴",
+    "REVIEW":            "🟡",
+    "ACCEPT_WITH_NOTES": "🟠",
+    "ACCEPT":            "🟢",
 }
 icon = STATUS_COLORS.get(status, "⚪")
 
 st.markdown(f"## {icon} Resultado: `{status}`")
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total defectos",   payload["total_defects"])
-col2.metric("Críticos",         payload["critical_defects"])
-col3.metric("Sistémico",        "Sí" if payload["is_systemic"] else "No")
-col4.metric("IPC Class",        ipc_class)
+col1.metric("Total defectos",  payload["total_defects"])
+col2.metric("Críticos",        payload["critical_defects"])
+col3.metric("Sistémico",       "Sí" if payload["is_systemic"] else "No")
+col4.metric("IPC Class",       ipc_class)
 
 st.markdown("---")
 
@@ -157,10 +197,8 @@ if payload["defects"]:
     st.subheader(f"📋 Defectos detectados ({payload['total_defects']})")
 
     for d in payload["defects"]:
-        severity = d["severity"]
-        sev_color = {
-            "critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"
-        }.get(severity, "⚪")
+        severity  = d["severity"]
+        sev_color = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(severity, "⚪")
 
         with st.expander(f"{sev_color} `{d['defect_id']}` — {d['defect_type']} ({severity.upper()})"):
             c1, c2 = st.columns(2)
@@ -183,18 +221,28 @@ else:
 
 st.markdown("---")
 
-# ── Payload JSON ──────────────────────────────────────────────────────────────
-with st.expander("📦 Payload JSON completo"):
+# ── Payload JSON interno ──────────────────────────────────────────────────────
+with st.expander("📦 Payload interno (enriquecido)"):
     st.json(payload)
     st.download_button(
-        label="⬇️ Descargar JSON",
+        label="⬇️ Descargar JSON interno",
         data=json.dumps(payload, indent=2, ensure_ascii=False),
         file_name=f"{pcb_id}_payload.json",
         mime="application/json",
     )
 
+# ── Payload del endpoint (Ajuste 2) ──────────────────────────────────────────
+with st.expander("📤 Payload del endpoint (formato del equipo)"):
+    st.json(endpoint_payload)
+    st.download_button(
+        label="⬇️ Descargar JSON endpoint",
+        data=json.dumps(endpoint_payload, indent=2, ensure_ascii=False),
+        file_name=f"{pcb_id}_endpoint_payload.json",
+        mime="application/json",
+    )
+
 # ── Prompt RAG ────────────────────────────────────────────────────────────────
-with st.expander("🤖 Prompt generado para el RAG Chatbot"):
+with st.expander("🤖 Prompt para el RAG Chatbot"):
     st.text_area("Prompt", value=rag_prompt, height=300, label_visibility="collapsed")
     st.download_button(
         label="⬇️ Descargar prompt .txt",
@@ -202,6 +250,42 @@ with st.expander("🤖 Prompt generado para el RAG Chatbot"):
         file_name=f"{pcb_id}_rag_prompt.txt",
         mime="text/plain",
     )
+
+st.markdown("---")
+
+# ── Ajuste 4: Envío al endpoint ───────────────────────────────────────────────
+st.subheader("🚀 Enviar al endpoint")
+
+if not endpoint_url:
+    st.info("Configura la URL del endpoint en el sidebar para habilitar el envío.")
+else:
+    # Pregunta opcional al RAG antes de enviar
+    user_question = st.text_input(
+        "Pregunta para el RAG (opcional)",
+        placeholder="¿Qué acción correctiva recomiendas para los defectos críticos?",
+    )
+
+    if st.button("📡 Enviar al endpoint", type="primary"):
+        # Reconstruir endpoint_payload con la pregunta si se ingresó una
+        final_payload = build_endpoint_payload(
+            internal_payload=payload,
+            standard_target="IPC-A-600",
+            product_class=product_class,
+            board_side=board_side,
+            user_question=user_question if user_question.strip() else None,
+        )
+
+        with st.spinner(f"Enviando a {endpoint_url}..."):
+            result = send_to_endpoint(
+                endpoint_payload=final_payload,
+                endpoint_url=endpoint_url,
+            )
+
+        if result["success"]:
+            st.success(f"✅ Enviado correctamente (HTTP {result['status_code']})")
+            st.json(result["response"])
+        else:
+            st.error(f"❌ Error al enviar: {result['error']}")
 
 st.markdown("---")
 st.caption(f"Inspection ID: `{pcb_id}` | Timestamp: {payload['timestamp']}")

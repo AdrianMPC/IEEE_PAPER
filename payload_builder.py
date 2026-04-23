@@ -19,9 +19,10 @@ def make_px_to_mm(
     image_h_px:    int   = config.IMAGE_H_PX,
 ):
     """
-    Devuelve una función px_to_mm configurada con la escala correcta.
-    Úsala así:
-        px_to_mm = make_px_to_mm()
+    Devuelve una función px_to_mm configurada con la escala de la PCB.
+    Se reconstruye cada vez que el usuario cambia las dimensiones en la UI.
+
+        px_to_mm = make_px_to_mm(pcb_width_mm=120.0, pcb_height_mm=90.0)
         w_mm = px_to_mm(w_px, axis='x')
     """
     scale_x = image_w_px / pcb_width_mm
@@ -37,7 +38,7 @@ def make_px_to_mm(
 # ─── Zona de ubicación en grilla 3×3 ─────────────────────────────────────────
 def get_location_zone(cx_norm: float, cy_norm: float) -> str:
     """
-    Divide la PCB en 9 zonas usando coordenadas normalizadas [0,1].
+    Divide la PCB en 9 zonas usando coordenadas normalizadas [0, 1].
     cx_norm, cy_norm provienen del campo xywhn de YOLO.
 
     Returns:
@@ -50,9 +51,9 @@ def get_location_zone(cx_norm: float, cy_norm: float) -> str:
 
 # ─── Cálculo de severidad operacional ────────────────────────────────────────
 def compute_severity(
-    defect_name: str,
-    confidence:  float,
-    area_mm2:    Optional[float],
+    defect_name:     str,
+    confidence:      float,
+    area_mm2:        Optional[float],
     defect_metadata: dict = config.DEFECT_METADATA,
 ) -> str:
     """
@@ -64,15 +65,13 @@ def compute_severity(
     Returns:
         str: "critical" | "high" | "medium" | "low" | "unknown"
     """
-    meta = defect_metadata.get(defect_name, {})
+    meta     = defect_metadata.get(defect_name, {})
     severity = meta.get("derived_severity", "unknown")
 
-    # Degradar por baja confianza
     if confidence < 0.50:
         degradation = {"critical": "high", "high": "medium", "medium": "low"}
         severity = degradation.get(severity, severity)
 
-    # Escalar por tamaño grande
     if area_mm2 is not None and area_mm2 > 5.0:
         escalation = {"low": "medium", "medium": "high"}
         severity = escalation.get(severity, severity)
@@ -81,12 +80,12 @@ def compute_severity(
 
 
 # ─── Estado global de la PCB ──────────────────────────────────────────────────
-def compute_board_status(defects: list[dict]) -> str:
+def compute_board_status(defects: list) -> str:
     """
     Determina el estado final de la PCB según las severidades detectadas.
 
     Returns:
-        str: "REJECT" | "REVIEW" | "ACCEPT" | "ACCEPT_WITH_NOTES"
+        str: "REJECT" | "REVIEW" | "ACCEPT_WITH_NOTES" | "ACCEPT"
     """
     if not defects:
         return "ACCEPT"
@@ -104,26 +103,34 @@ def compute_board_status(defects: list[dict]) -> str:
 def enrich_yolo_results(
     results,
     class_names:          dict,
-    defect_metadata:      dict        = config.DEFECT_METADATA,
-    image_id:             str         = "PCB_001",
-    pcb_dimensions_known: bool        = config.PCB_DIMENSIONS_KNOWN,
+    defect_metadata:      dict          = config.DEFECT_METADATA,
+    image_id:             str           = "PCB_001",
+    pcb_dimensions_known: bool          = config.PCB_DIMENSIONS_KNOWN,
+    pcb_width_mm:         float         = config.PCB_WIDTH_MM,
+    pcb_height_mm:        float         = config.PCB_HEIGHT_MM,
     annotated_image_path: Optional[str] = None,
 ) -> dict:
     """
-    Convierte los results crudos de YOLO en un payload estructurado enriquecido.
+    Convierte los results crudos de YOLO en un payload interno enriquecido.
 
     Args:
         results:              salida de model.predict()
         class_names:          dict {int: str} cargado desde data.yaml o model.names
         defect_metadata:      diccionario IPC con severidades y metadatos
         image_id:             identificador único de la inspección
-        pcb_dimensions_known: si True, convierte a mm; si False, solo px
-        annotated_image_path: ruta de la imagen anotada guardada (puede ser None)
+        pcb_dimensions_known: si True convierte a mm; si False solo px
+        pcb_width_mm:         ancho real de la PCB en mm (viene de la UI o config)
+        pcb_height_mm:        alto real de la PCB en mm (viene de la UI o config)
+        annotated_image_path: ruta de la imagen anotada guardada en disco
 
     Returns:
-        dict: payload completo listo para guardar como JSON o enviar al RAG
+        dict: payload interno completo → usar build_endpoint_payload() para el endpoint
     """
-    px_to_mm = make_px_to_mm() if pcb_dimensions_known else None
+    # Reconstruye la escala con las dimensiones que llegaron (UI o default)
+    px_to_mm = make_px_to_mm(
+        pcb_width_mm=pcb_width_mm,
+        pcb_height_mm=pcb_height_mm,
+    ) if pcb_dimensions_known else None
 
     all_defects  = []
     class_counts = {}
@@ -147,8 +154,8 @@ def enrich_yolo_results(
 
             w_mm = h_mm = area_mm2 = None
             if pcb_dimensions_known and px_to_mm:
-                w_mm    = px_to_mm(w_px, "x")
-                h_mm    = px_to_mm(h_px, "y")
+                w_mm     = px_to_mm(w_px, "x")
+                h_mm     = px_to_mm(h_px, "y")
                 area_mm2 = round(w_mm * h_mm, 4)
 
             # ── Enriquecimiento semántico ─────────────────────────────────────
@@ -195,7 +202,7 @@ def enrich_yolo_results(
     is_systemic    = any(v >= 3 for v in class_counts.values())
     overall_status = compute_board_status(all_defects)
 
-    payload = {
+    return {
         "inspection_id":        image_id,
         "timestamp":            datetime.now().isoformat(),
         "total_defects":        len(all_defects),
@@ -207,4 +214,59 @@ def enrich_yolo_results(
         "defects":              all_defects,
     }
 
-    return payload
+
+# ─── Ajuste 2: transformar payload interno → formato del endpoint ─────────────
+def build_endpoint_payload(
+    internal_payload: dict,
+    standard_target:  str           = "IPC-A-600",
+    product_class:    str           = "unknown",
+    board_side:       str           = "top",
+    user_question:    Optional[str] = None,
+) -> dict:
+    """
+    Transforma el payload interno enriquecido al formato exacto que espera
+    el endpoint del equipo, preservando toda la información en 'enriched_data'.
+
+    Args:
+        internal_payload: dict retornado por enrich_yolo_results()
+        standard_target:  estándar de referencia (default "IPC-A-600")
+        product_class:    clase del producto según el equipo
+        board_side:       cara de la PCB inspeccionada ("top" | "bottom")
+        user_question:    pregunta libre del usuario al RAG (puede ser None)
+
+    Returns:
+        dict: payload en el formato del endpoint
+    """
+    detections = []
+    for d in internal_payload.get("defects", []):
+        detections.append({
+            "defect_id":    d["defect_id"],
+            "defect_class": d["defect_type"],
+            "confidence":   d["confidence"],
+            "severity":     d["severity"],
+            "location":     d["location"]["zone"],
+            "bbox_px":      d["location"]["bbox_px"],
+            "dimensions":   d["dimensions"],
+            "ipc_family":   d["ipc_family"],
+            "ipc_basis":    d["ipc_basis"],
+        })
+
+    return {
+        # Formato esperado por el endpoint
+        "detections":      detections,
+        "standard_target": standard_target,
+        "product_class":   product_class,
+        "board_side":      board_side,
+        "user_question":   user_question,
+
+        # Metadata de la inspección
+        "inspection_id":    internal_payload["inspection_id"],
+        "timestamp":        internal_payload["timestamp"],
+        "overall_status":   internal_payload["overall_status"],
+        "total_defects":    internal_payload["total_defects"],
+        "critical_defects": internal_payload["critical_defects"],
+        "is_systemic":      internal_payload["is_systemic"],
+
+        # Payload interno completo embebido para el RAG
+        "enriched_data":    internal_payload,
+    }

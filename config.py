@@ -8,6 +8,12 @@ import os
 BASE_DIR           = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH         = os.path.join(BASE_DIR, "models", "small_11.pt")
 DATA_YAML_PATH     = os.path.join(BASE_DIR, "models", "data.yaml")
+
+# ─── Descarga automática del modelo (Ajuste 3) ────────────────────────────────
+# Pega el ID de tu archivo en Google Drive (parte de la URL después de /d/).
+# Ejemplo de URL: https://drive.google.com/file/d/ESTE_ES_EL_ID/view
+# Deja MODEL_GDRIVE_ID = None para copiar el modelo manualmente a models/.
+MODEL_GDRIVE_ID = None   # <- reemplaza con tu ID, ej: "1aBcDeFgHiJ..."
 UPLOADED_IMG_DIR   = os.path.join(BASE_DIR, "uploaded_images")
 OUTPUT_DIR         = os.path.join(BASE_DIR, "outputs")
 ANNOTATED_DIR      = os.path.join(OUTPUT_DIR, "annotated")
@@ -105,4 +111,5 @@ DEFECT_METADATA = {
     },
 }
 
+# Atajo: solo severidades base (para compatibilidad si se necesita)
 DEFECT_SEVERITY_BASE = {k: v["derived_severity"] for k, v in DEFECT_METADATA.items()}
