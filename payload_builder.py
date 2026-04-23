@@ -232,15 +232,18 @@ def build_endpoint_payload(
     detections = []
 
     for defect in enriched_payload.get("defects", []):
+        location_obj = defect.get("location", {})
+        dimensions = defect.get("dimensions", {})
+
         detections.append({
             "severity": str(defect.get("severity", "UNKNOWN")).upper(),
             "defect_class": normalize_endpoint_defect_class(defect.get("defect_type", "")),
             "confidence": round(float(defect.get("confidence", 0.0)), 3),
-            "location": defect.get("location", "unknown"),
-            "width_mm": round(float(defect.get("width_mm", 0.0)), 3),
-            "height_mm": round(float(defect.get("height_mm", 0.0)), 3),
-            "area_mm2": round(float(defect.get("area_mm2", 0.0)), 4),
-            "reference": defect.get("reference", "IPC-A-600")
+            "location": location_obj["zone"],
+            "width_mm": dimensions["width_mm"],
+            "height_mm": dimensions["height_mm"],
+            "area_mm2": dimensions["area_mm2"],
+            "reference": defect["ipc_reference"],
         })
 
     return {
@@ -249,4 +252,13 @@ def build_endpoint_payload(
         "product_class": product_class,
         "board_side": board_side,
         "user_question": user_question,
+    }
+
+def build_delivery_payload(
+    endpoint_payload: dict,
+    annotated_image_path: str | None = None,
+) -> dict:
+    return {
+        "annotated_image_path": annotated_image_path,
+        "inspection_payload": endpoint_payload,
     }

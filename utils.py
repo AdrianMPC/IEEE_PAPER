@@ -36,6 +36,19 @@ def save_payload_json(
     return json_path
 
 
+# ─── Guardado de delivery payload JSON ────────────────────────────────────────
+def save_delivery_payload_json(
+    payload: dict,
+    pcb_id: str,
+    output_dir: str = config.JSON_DIR,
+) -> str:
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    json_path = str(Path(output_dir) / f"{pcb_id}_delivery_payload.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    return json_path
+
+
 # ─── Guardado de prompt RAG ───────────────────────────────────────────────────
 def save_rag_prompt(
     prompt:     str,

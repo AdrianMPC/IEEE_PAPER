@@ -7,11 +7,14 @@ import streamlit as st
 
 import config
 from inference       import ensure_model_exists, load_model, run_inference, get_annotated_image, save_annotated_image
-from payload_builder import enrich_yolo_results, build_endpoint_payload
 from rag_utils       import build_rag_prompt
-from utils           import save_uploaded_image, save_payload_json, save_rag_prompt, generate_pcb_id
+from utils           import save_uploaded_image, save_payload_json, save_rag_prompt, generate_pcb_id, save_delivery_payload_json
 from api_client      import send_to_endpoint
-
+from payload_builder import (
+    enrich_yolo_results,
+    build_endpoint_payload,
+    build_delivery_payload,
+)
 
 # ─── Configuración de página ──────────────────────────────────────────────────
 st.set_page_config(
@@ -119,6 +122,10 @@ if uploaded_file is None:
     st.info("👆 Sube una imagen para comenzar la inspección.")
     st.stop()
 
+process_image = st.button("🔍 Procesar imagen", type="primary")
+if not process_image:
+    st.stop()
+
 # ─── Procesamiento ────────────────────────────────────────────────────────────
 with st.spinner("Procesando imagen..."):
 
@@ -157,12 +164,18 @@ with st.spinner("Procesando imagen..."):
     save_rag_prompt(rag_prompt, pcb_id)
 
     # 7. Payload para el endpoint
-    endpoint_payload = build_endpoint_payload(
+    inspection_payload = build_endpoint_payload(
         enriched_payload=payload,
         product_class=product_class,
         board_side=board_side,
-        user_question=user_question if user_question else None,
     )
+
+    delivery_payload = build_delivery_payload(
+        inspection_payload=inspection_payload,
+        annotated_image_path=annotated_path,
+    )
+    
+    save_delivery_payload_json(delivery_payload, pcb_id)
 
 
 # ─── Resultados ───────────────────────────────────────────────────────────────
@@ -232,11 +245,20 @@ with st.expander("📦 Payload interno (enriquecido)"):
 
 # ── Payload del endpoint ──────────────────────────────────────────
 with st.expander("📤 Payload del endpoint (formato del equipo)"):
-    st.json(endpoint_payload)
+    st.json(inspection_payload)
     st.download_button(
         label="⬇️ Descargar JSON endpoint",
-        data=json.dumps(endpoint_payload, indent=2, ensure_ascii=False),
-        file_name=f"{pcb_id}_endpoint_payload.json",
+        data=json.dumps(inspection_payload, indent=2, ensure_ascii=False),
+        file_name=f"{pcb_id}_inspection_payload.json",
+        mime="application/json",
+    )
+
+with st.expander("🚚 Payload de envío (JSON + ruta imagen labelada)"):
+    st.json(delivery_payload)
+    st.download_button(
+        label="⬇️ Descargar payload de envío",
+        data=json.dumps(delivery_payload, indent=2, ensure_ascii=False),
+        file_name=f"{pcb_id}_delivery_payload.json",
         mime="application/json",
     )
 
@@ -266,17 +288,22 @@ else:
 
     if st.button("📡 Enviar al endpoint", type="primary"):
         # Reconstruir endpoint_payload con la pregunta si se ingresó una
-        final_payload = build_endpoint_payload(
-            internal_payload=payload,
+        final_inspection_payload = build_endpoint_payload(
+            enriched_payload=payload,
             standard_target="IPC-A-600",
             product_class=product_class,
             board_side=board_side,
             user_question=user_question if user_question.strip() else None,
         )
 
+        final_delivery_payload = build_delivery_payload(
+            inspection_payload=final_inspection_payload,
+            annotated_image_path=annotated_path,
+        )
+
         with st.spinner(f"Enviando a {endpoint_url}..."):
             result = send_to_endpoint(
-                endpoint_payload=final_payload,
+                endpoint_payload=final_delivery_payload,
                 endpoint_url=endpoint_url,
             )
 
