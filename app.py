@@ -156,13 +156,12 @@ with st.spinner("Procesando imagen..."):
     save_payload_json(payload, pcb_id)
     save_rag_prompt(rag_prompt, pcb_id)
 
-    # 7. Payload para el endpoint (Ajuste 2)
+    # 7. Payload para el endpoint
     endpoint_payload = build_endpoint_payload(
-        internal_payload=payload,
-        standard_target="IPC-A-600",
+        enriched_payload=payload,
         product_class=product_class,
         board_side=board_side,
-        user_question=None,
+        user_question=user_question if user_question else None,
     )
 
 
@@ -231,7 +230,7 @@ with st.expander("📦 Payload interno (enriquecido)"):
         mime="application/json",
     )
 
-# ── Payload del endpoint (Ajuste 2) ──────────────────────────────────────────
+# ── Payload del endpoint ──────────────────────────────────────────
 with st.expander("📤 Payload del endpoint (formato del equipo)"):
     st.json(endpoint_payload)
     st.download_button(

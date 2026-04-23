@@ -10,10 +10,7 @@ MODEL_PATH         = os.path.join(BASE_DIR, "models", "small_11.pt")
 DATA_YAML_PATH     = os.path.join(BASE_DIR, "models", "data.yaml")
 
 # ─── Descarga automática del modelo (Ajuste 3) ────────────────────────────────
-# Pega el ID de tu archivo en Google Drive (parte de la URL después de /d/).
-# Ejemplo de URL: https://drive.google.com/file/d/ESTE_ES_EL_ID/view
-# Deja MODEL_GDRIVE_ID = None para copiar el modelo manualmente a models/.
-MODEL_GDRIVE_ID = None   # <- reemplaza con tu ID, ej: "1aBcDeFgHiJ..."
+MODEL_GDRIVE_ID = os.getenv("MODEL_GDRIVE_ID")   
 UPLOADED_IMG_DIR   = os.path.join(BASE_DIR, "uploaded_images")
 OUTPUT_DIR         = os.path.join(BASE_DIR, "outputs")
 ANNOTATED_DIR      = os.path.join(OUTPUT_DIR, "annotated")
@@ -29,10 +26,7 @@ YOLO_IOU       = 0.30   # umbral de IoU para NMS
 YOLO_IMGSZ     = 640    # tamaño de imagen de entrada
 
 # ─── Calibración píxel → milímetro ───────────────────────────────────────────
-# Ajusta PCB_WIDTH_MM y PCB_HEIGHT_MM según las dimensiones reales de tu PCB.
-# Si no las conoces, deja PCB_DIMENSIONS_KNOWN = False y el sistema
-# reportará solo en píxeles.
-PCB_DIMENSIONS_KNOWN = True
+PCB_DIMENSIONS_KNOWN = False
 PCB_WIDTH_MM         = 100.0   # ancho real de la PCB en mm
 PCB_HEIGHT_MM        = 80.0    # alto real de la PCB en mm
 IMAGE_W_PX           = YOLO_IMGSZ

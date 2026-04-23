@@ -110,23 +110,7 @@ def enrich_yolo_results(
     pcb_height_mm:        float         = config.PCB_HEIGHT_MM,
     annotated_image_path: Optional[str] = None,
 ) -> dict:
-    """
-    Convierte los results crudos de YOLO en un payload interno enriquecido.
 
-    Args:
-        results:              salida de model.predict()
-        class_names:          dict {int: str} cargado desde data.yaml o model.names
-        defect_metadata:      diccionario IPC con severidades y metadatos
-        image_id:             identificador único de la inspección
-        pcb_dimensions_known: si True convierte a mm; si False solo px
-        pcb_width_mm:         ancho real de la PCB en mm (viene de la UI o config)
-        pcb_height_mm:        alto real de la PCB en mm (viene de la UI o config)
-        annotated_image_path: ruta de la imagen anotada guardada en disco
-
-    Returns:
-        dict: payload interno completo → usar build_endpoint_payload() para el endpoint
-    """
-    # Reconstruye la escala con las dimensiones que llegaron (UI o default)
     px_to_mm = make_px_to_mm(
         pcb_width_mm=pcb_width_mm,
         pcb_height_mm=pcb_height_mm,
@@ -214,59 +198,55 @@ def enrich_yolo_results(
         "defects":              all_defects,
     }
 
+CLASS_NAME_TO_ENDPOINT = {
+    "Spurious Copper": "spurious_copper",
+    "spurious copper": "spurious_copper",
+    "spurious_copper": "spurious_copper",
+    "Short": "short",
+    "short": "short",
+    "Open Circuit": "open_circuit",
+    "open circuit": "open_circuit",
+    "open_circuit": "open_circuit",
+    "Mouse Bite": "mouse_bite",
+    "mouse bite": "mouse_bite",
+    "mouse_bite": "mouse_bite",
+    "Spur": "spur",
+    "spur": "spur",
+    "Pin Hole": "pin_hole",
+    "pin hole": "pin_hole",
+    "pin_hole": "pin_hole",
+}
 
-# ─── Ajuste 2: transformar payload interno → formato del endpoint ─────────────
+def normalize_endpoint_defect_class(name: str) -> str:
+    if not name:
+        return "unknown"
+    return CLASS_NAME_TO_ENDPOINT.get(name.strip(), name.strip().lower().replace(" ", "_"))
+
 def build_endpoint_payload(
-    internal_payload: dict,
-    standard_target:  str           = "IPC-A-600",
-    product_class:    str           = "unknown",
-    board_side:       str           = "top",
-    user_question:    Optional[str] = None,
+    enriched_payload: dict,
+    product_class: str = "unknown",
+    board_side: str = "top",
+    user_question=None,
+    standard_target: str = "IPC-A-600",
 ) -> dict:
-    """
-    Transforma el payload interno enriquecido al formato exacto que espera
-    el endpoint del equipo, preservando toda la información en 'enriched_data'.
-
-    Args:
-        internal_payload: dict retornado por enrich_yolo_results()
-        standard_target:  estándar de referencia (default "IPC-A-600")
-        product_class:    clase del producto según el equipo
-        board_side:       cara de la PCB inspeccionada ("top" | "bottom")
-        user_question:    pregunta libre del usuario al RAG (puede ser None)
-
-    Returns:
-        dict: payload en el formato del endpoint
-    """
     detections = []
-    for d in internal_payload.get("defects", []):
+
+    for defect in enriched_payload.get("defects", []):
         detections.append({
-            "defect_id":    d["defect_id"],
-            "defect_class": d["defect_type"],
-            "confidence":   d["confidence"],
-            "severity":     d["severity"],
-            "location":     d["location"]["zone"],
-            "bbox_px":      d["location"]["bbox_px"],
-            "dimensions":   d["dimensions"],
-            "ipc_family":   d["ipc_family"],
-            "ipc_basis":    d["ipc_basis"],
+            "severity": str(defect.get("severity", "UNKNOWN")).upper(),
+            "defect_class": normalize_endpoint_defect_class(defect.get("defect_type", "")),
+            "confidence": round(float(defect.get("confidence", 0.0)), 3),
+            "location": defect.get("location", "unknown"),
+            "width_mm": round(float(defect.get("width_mm", 0.0)), 3),
+            "height_mm": round(float(defect.get("height_mm", 0.0)), 3),
+            "area_mm2": round(float(defect.get("area_mm2", 0.0)), 4),
+            "reference": defect.get("reference", "IPC-A-600")
         })
 
     return {
-        # Formato esperado por el endpoint
-        "detections":      detections,
+        "detections": detections,
         "standard_target": standard_target,
-        "product_class":   product_class,
-        "board_side":      board_side,
-        "user_question":   user_question,
-
-        # Metadata de la inspección
-        "inspection_id":    internal_payload["inspection_id"],
-        "timestamp":        internal_payload["timestamp"],
-        "overall_status":   internal_payload["overall_status"],
-        "total_defects":    internal_payload["total_defects"],
-        "critical_defects": internal_payload["critical_defects"],
-        "is_systemic":      internal_payload["is_systemic"],
-
-        # Payload interno completo embebido para el RAG
-        "enriched_data":    internal_payload,
+        "product_class": product_class,
+        "board_side": board_side,
+        "user_question": user_question,
     }
