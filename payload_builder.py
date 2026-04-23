@@ -1,0 +1,210 @@
+# =============================================================================
+# payload_builder.py — Enrichment Layer: YOLO results → JSON payload
+# =============================================================================
+# Todas las funciones reciben sus dependencias como parámetros (sin globales)
+# para ser reutilizables y testeables fuera del entorno de Streamlit.
+# =============================================================================
+
+from datetime import datetime
+from typing import Optional
+
+import config
+
+
+# ─── Calibración píxel → milímetro ───────────────────────────────────────────
+def make_px_to_mm(
+    pcb_width_mm:  float = config.PCB_WIDTH_MM,
+    pcb_height_mm: float = config.PCB_HEIGHT_MM,
+    image_w_px:    int   = config.IMAGE_W_PX,
+    image_h_px:    int   = config.IMAGE_H_PX,
+):
+    """
+    Devuelve una función px_to_mm configurada con la escala correcta.
+    Úsala así:
+        px_to_mm = make_px_to_mm()
+        w_mm = px_to_mm(w_px, axis='x')
+    """
+    scale_x = image_w_px / pcb_width_mm
+    scale_y = image_h_px / pcb_height_mm
+
+    def px_to_mm(px_value: float, axis: str = "x") -> float:
+        scale = scale_x if axis == "x" else scale_y
+        return round(px_value / scale, 3)
+
+    return px_to_mm
+
+
+# ─── Zona de ubicación en grilla 3×3 ─────────────────────────────────────────
+def get_location_zone(cx_norm: float, cy_norm: float) -> str:
+    """
+    Divide la PCB en 9 zonas usando coordenadas normalizadas [0,1].
+    cx_norm, cy_norm provienen del campo xywhn de YOLO.
+
+    Returns:
+        str: p.ej. "top-left", "middle-center", "bottom-right"
+    """
+    col = "left"   if cx_norm < 0.33 else ("center" if cx_norm < 0.66 else "right")
+    row = "top"    if cy_norm < 0.33 else ("middle"  if cy_norm < 0.66 else "bottom")
+    return f"{row}-{col}"
+
+
+# ─── Cálculo de severidad operacional ────────────────────────────────────────
+def compute_severity(
+    defect_name: str,
+    confidence:  float,
+    area_mm2:    Optional[float],
+    defect_metadata: dict = config.DEFECT_METADATA,
+) -> str:
+    """
+    Severidad final ajustada por:
+      - Severidad base del mapeo normativo IPC
+      - Confianza del detector (degrada si < 0.50)
+      - Área del defecto (escala si > 5 mm²)
+
+    Returns:
+        str: "critical" | "high" | "medium" | "low" | "unknown"
+    """
+    meta = defect_metadata.get(defect_name, {})
+    severity = meta.get("derived_severity", "unknown")
+
+    # Degradar por baja confianza
+    if confidence < 0.50:
+        degradation = {"critical": "high", "high": "medium", "medium": "low"}
+        severity = degradation.get(severity, severity)
+
+    # Escalar por tamaño grande
+    if area_mm2 is not None and area_mm2 > 5.0:
+        escalation = {"low": "medium", "medium": "high"}
+        severity = escalation.get(severity, severity)
+
+    return severity
+
+
+# ─── Estado global de la PCB ──────────────────────────────────────────────────
+def compute_board_status(defects: list[dict]) -> str:
+    """
+    Determina el estado final de la PCB según las severidades detectadas.
+
+    Returns:
+        str: "REJECT" | "REVIEW" | "ACCEPT" | "ACCEPT_WITH_NOTES"
+    """
+    if not defects:
+        return "ACCEPT"
+
+    severities = [d["severity"] for d in defects]
+
+    if "critical" in severities:
+        return "REJECT"
+    if severities.count("high") >= 2:
+        return "REVIEW"
+    return "ACCEPT_WITH_NOTES"
+
+
+# ─── Enrichment Layer principal ───────────────────────────────────────────────
+def enrich_yolo_results(
+    results,
+    class_names:          dict,
+    defect_metadata:      dict        = config.DEFECT_METADATA,
+    image_id:             str         = "PCB_001",
+    pcb_dimensions_known: bool        = config.PCB_DIMENSIONS_KNOWN,
+    annotated_image_path: Optional[str] = None,
+) -> dict:
+    """
+    Convierte los results crudos de YOLO en un payload estructurado enriquecido.
+
+    Args:
+        results:              salida de model.predict()
+        class_names:          dict {int: str} cargado desde data.yaml o model.names
+        defect_metadata:      diccionario IPC con severidades y metadatos
+        image_id:             identificador único de la inspección
+        pcb_dimensions_known: si True, convierte a mm; si False, solo px
+        annotated_image_path: ruta de la imagen anotada guardada (puede ser None)
+
+    Returns:
+        dict: payload completo listo para guardar como JSON o enviar al RAG
+    """
+    px_to_mm = make_px_to_mm() if pcb_dimensions_known else None
+
+    all_defects  = []
+    class_counts = {}
+
+    for result in results:
+        boxes = result.boxes
+        if boxes is None or len(boxes) == 0:
+            continue
+
+        for box in boxes:
+            # ── Datos crudos YOLO ────────────────────────────────────────────
+            cls_id     = int(box.cls.item())
+            confidence = round(float(box.conf.item()), 4)
+            x1, y1, x2, y2 = [round(v, 1) for v in box.xyxy[0].tolist()]
+            cx_n, cy_n, w_n, h_n = box.xywhn[0].tolist()
+
+            # ── Dimensiones ──────────────────────────────────────────────────
+            w_px    = round(x2 - x1, 1)
+            h_px    = round(y2 - y1, 1)
+            area_px = round(w_px * h_px, 1)
+
+            w_mm = h_mm = area_mm2 = None
+            if pcb_dimensions_known and px_to_mm:
+                w_mm    = px_to_mm(w_px, "x")
+                h_mm    = px_to_mm(h_px, "y")
+                area_mm2 = round(w_mm * h_mm, 4)
+
+            # ── Enriquecimiento semántico ─────────────────────────────────────
+            defect_name   = class_names.get(cls_id, f"class_{cls_id}")
+            location_zone = get_location_zone(cx_n, cy_n)
+            meta          = defect_metadata.get(defect_name, {})
+            severity      = compute_severity(defect_name, confidence, area_mm2, defect_metadata)
+
+            class_counts[defect_name] = class_counts.get(defect_name, 0) + 1
+
+            # ── Record del defecto ───────────────────────────────────────────
+            defect_record = {
+                "defect_id":   f"{image_id}_D{len(all_defects) + 1:03d}",
+                "defect_type": defect_name,
+                "class_id":    cls_id,
+                "confidence":  confidence,
+                "severity":    severity,
+
+                # Campos IPC-A-600M
+                "ipc_family":                meta.get("ipc_family", "Unknown"),
+                "ipc_basis":                 meta.get("ipc_basis", "Nonconforming"),
+                "description":               meta.get("description", "No description available"),
+                "engineering_justification": meta.get("engineering_justification", "Manual review required"),
+                "ipc_reference":             "IPC-A-600M",
+
+                "location": {
+                    "zone":        location_zone,
+                    "bbox_px":     {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                    "center_norm": {"cx": round(cx_n, 4), "cy": round(cy_n, 4)},
+                },
+                "dimensions": {
+                    "width_px":  w_px,
+                    "height_px": h_px,
+                    "area_px2":  area_px,
+                    "width_mm":  w_mm,
+                    "height_mm": h_mm,
+                    "area_mm2":  area_mm2,
+                },
+            }
+            all_defects.append(defect_record)
+
+    # ── Resumen global ─────────────────────────────────────────────────────────
+    critical_count = sum(1 for d in all_defects if d["severity"] == "critical")
+    is_systemic    = any(v >= 3 for v in class_counts.values())
+    overall_status = compute_board_status(all_defects)
+
+    payload = {
+        "inspection_id":        image_id,
+        "timestamp":            datetime.now().isoformat(),
+        "total_defects":        len(all_defects),
+        "critical_defects":     critical_count,
+        "is_systemic":          is_systemic,
+        "defects_by_type":      class_counts,
+        "overall_status":       overall_status,
+        "annotated_image_path": annotated_image_path,
+        "defects":              all_defects,
+    }
+
+    return payload
