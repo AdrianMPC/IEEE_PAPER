@@ -87,12 +87,12 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🌐 API RAG")
 
-    rag_api_url = st.secrets.get("RAG_API_URL", config.RAG_API_URL)
+    rag_api_url = config.get_api_url("report_generate")
 
     if rag_api_url:
         st.success("API RAG configurada")
     else:
-        st.error("API RAG no configurada. Define RAG_API_URL en .env o Streamlit secrets.")
+        st.error("API RAG no configurada. Define RAG_API_BASE_URL en secrets.toml.")
 
     board_side = st.selectbox(
         "Cara de la PCB",
@@ -129,53 +129,75 @@ if uploaded_file is None:
     st.stop()
 
 process_image = st.button("🔍 Procesar imagen", type="primary")
-if not process_image:
-    st.stop()
+
+if process_image:
+    st.session_state["has_processed"] = True
+else:
+    if not st.session_state.get("has_processed", False):
+        st.stop()
 
 # ─── Procesamiento ────────────────────────────────────────────────────────────
-with st.spinner("Procesando imagen..."):
+if process_image:
+    with st.spinner("Procesando imagen..."):
 
-    # 1. Guardar imagen subida en disco
-    image_path = save_uploaded_image(uploaded_file)
-    pcb_id     = generate_pcb_id(uploaded_file.name)
+        # 1. Guardar imagen subida en disco
+        image_path = save_uploaded_image(uploaded_file)
+        pcb_id     = generate_pcb_id(uploaded_file.name)
 
-    # 2. Inferencia YOLO
-    results = run_inference(
-        model, device, image_path,
-        conf=conf_threshold,
-        iou=iou_threshold,
-    )
+        # 2. Inferencia YOLO
+        results = run_inference(
+            model, device, image_path,
+            conf=conf_threshold,
+            iou=iou_threshold,
+        )
 
-    # 3. Imagen anotada (RGB para st.image + BGR guardada en disco)
-    annotated_rgb  = get_annotated_image(results)
-    annotated_path = save_annotated_image(results, pcb_id)
+        # 3. Imagen anotada (RGB para st.image + BGR guardada en disco)
+        annotated_rgb  = get_annotated_image(results)
+        annotated_path = save_annotated_image(results, pcb_id)
 
-    # 4. Payload interno enriquecido
-    # Ajuste 1: pcb_w y pcb_h de la UI llegan correctamente aquí
-    payload = enrich_yolo_results(
-        results,
-        class_names=class_names,
-        image_id=pcb_id,
-        pcb_dimensions_known=pcb_dims_known,
-        pcb_width_mm=pcb_w,
-        pcb_height_mm=pcb_h,
-        annotated_image_path=annotated_path,
-    )
+        # 4. Payload interno enriquecido
+        # Ajuste 1: pcb_w y pcb_h de la UI llegan correctamente aquí
+        payload = enrich_yolo_results(
+            results,
+            class_names=class_names,
+            image_id=pcb_id,
+            pcb_dimensions_known=pcb_dims_known,
+            pcb_width_mm=pcb_w,
+            pcb_height_mm=pcb_h,
+            annotated_image_path=annotated_path,
+        )
 
-    # 5. Prompt RAG
-    rag_prompt = build_rag_prompt(payload, ipc_class=ipc_class)
+        # 5. Prompt RAG
+        rag_prompt = build_rag_prompt(payload, ipc_class=ipc_class)
 
-    # 6. Guardar en disco
-    save_payload_json(payload, pcb_id)
-    save_rag_prompt(rag_prompt, pcb_id)
+        # 6. Guardar en disco
+        save_payload_json(payload, pcb_id)
+        save_rag_prompt(rag_prompt, pcb_id)
 
-    # 7. Payload para el endpoint
-    inspection_payload = build_endpoint_payload(
-        enriched_payload=payload,
-        annotated_image_path=annotated_path,
-        product_class=product_class,
-        board_side=board_side,
-    )
+        # 7. Payload para el endpoint
+        inspection_payload = build_endpoint_payload(
+            enriched_payload=payload,
+            annotated_image_path=annotated_path,
+            product_class=product_class,
+            board_side=board_side,
+        )
+
+        st.session_state["pcb_id"] = pcb_id
+        st.session_state["payload"] = payload
+        st.session_state["rag_prompt"] = rag_prompt
+        st.session_state["inspection_payload"] = inspection_payload
+        st.session_state["annotated_rgb"] = annotated_rgb
+        st.session_state["annotated_path"] = annotated_path
+
+if not st.session_state.get("has_processed", False):
+    st.stop()
+
+pcb_id = st.session_state["pcb_id"]
+payload = st.session_state["payload"]
+rag_prompt = st.session_state["rag_prompt"]
+inspection_payload = st.session_state["inspection_payload"]
+annotated_rgb = st.session_state["annotated_rgb"]
+annotated_path = st.session_state["annotated_path"]
 
 # ─── Resultados ───────────────────────────────────────────────────────────────
 status = payload["overall_status"]
@@ -252,16 +274,6 @@ with st.expander("📤 Payload del endpoint (formato del equipo)"):
         mime="application/json",
     )
 
-# ── Prompt RAG ────────────────────────────────────────────────────────────────
-with st.expander("🤖 Prompt para el RAG Chatbot"):
-    st.text_area("Prompt", value=rag_prompt, height=300, label_visibility="collapsed")
-    st.download_button(
-        label="⬇️ Descargar prompt .txt",
-        data=rag_prompt,
-        file_name=f"{pcb_id}_rag_prompt.txt",
-        mime="text/plain",
-    )
-
 st.markdown("---")
 
 # ── Ajuste 4: Envío al endpoint ───────────────────────────────────────────────
@@ -298,9 +310,6 @@ else:
 
             rag_response = result["response"]
 
-            st.subheader("🧾 Respuesta de la API RAG")
-            st.json(rag_response)
-
             pdf_path = f"{config.REPORTS_DIR}/{pcb_id}_inspection_report.pdf"
 
             build_pdf_report(
@@ -310,15 +319,25 @@ else:
                 output_path=pdf_path,
             )
 
-            with open(pdf_path, "rb") as pdf_file:
-                st.download_button(
-                    label="⬇️ Descargar reporte PDF",
-                    data=pdf_file,
-                    file_name=f"{pcb_id}_inspection_report.pdf",
-                    mime="application/pdf",
-                )
+            st.session_state["rag_response"] = rag_response
+            st.session_state["pdf_path"] = pdf_path
         else:
-            st.error(f"❌ Error al generar reporte: {result['error']}")
+            st.error(f"❌ Error al generar reporte, Status code: {result.get('status_code')}")
+            st.error(f"Detalle: {result.get('error')}")
+
+    if st.session_state.get("rag_response"):
+        st.subheader("🧾 Respuesta de la API RAG")
+        st.json(st.session_state["rag_response"])
+
+    if st.session_state.get("pdf_path"):
+        with open(st.session_state["pdf_path"], "rb") as pdf_file:
+            st.download_button(
+                label="⬇️ Descargar reporte PDF",
+                data=pdf_file,
+                file_name=f"{pcb_id}_inspection_report.pdf",
+                mime="application/pdf",
+                key=f"download_pdf_{pcb_id}",
+            )
 
 st.markdown("---")
 st.caption(f"Inspection ID: `{pcb_id}` | Timestamp: {payload['timestamp']}")

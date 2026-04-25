@@ -4,6 +4,7 @@
 
 import os
 from dotenv import load_dotenv
+import streamlit as st
 load_dotenv()
 
 # ─── Rutas del proyecto ───────────────────────────────────────────────────────
@@ -12,15 +13,40 @@ MODEL_PATH         = os.path.join(BASE_DIR, "models", "small_11.pt")
 DATA_YAML_PATH     = os.path.join(BASE_DIR, "models", "data.yaml")
 
 # ─── Descarga automática del modelo (Ajuste 3) ────────────────────────────────
-MODEL_GDRIVE_ID = os.getenv("MODEL_GDRIVE_ID")
+MODEL_GDRIVE_ID = st.secrets.get("MODEL_GDRIVE_ID", os.getenv("MODEL_GDRIVE_ID"))
 UPLOADED_IMG_DIR   = os.path.join(BASE_DIR, "uploaded_images")
 OUTPUT_DIR         = os.path.join(BASE_DIR, "outputs")
 ANNOTATED_DIR      = os.path.join(OUTPUT_DIR, "annotated")
 JSON_DIR           = os.path.join(OUTPUT_DIR, "json")
 
 # ─── API RAG ─────────────────────────────────────────────────────────────────
-RAG_API_URL = os.getenv("RAG_API_URL", "")
-RAG_API_TIMEOUT = int(os.getenv("RAG_API_TIMEOUT", "90"))
+RAG_API_BASE_URL = str(st.secrets.get(
+        "RAG_API_BASE_URL",
+        os.getenv("RAG_API_BASE_URL", ""
+    ))).rstrip("/")
+RAG_API_TIMEOUT = int(st.secrets.get("RAG_API_TIMEOUT", os.getenv("RAG_API_TIMEOUT", 90)))
+
+API_V1_PREFIX = "/api/v1"
+
+RAG_ENDPOINTS = {
+    "health": f"{API_V1_PREFIX}/health",
+    "rag_retrieve": f"{API_V1_PREFIX}/rag/retrieve",
+    "rag_query": f"{API_V1_PREFIX}/rag/query",
+    "rag_debug": f"{API_V1_PREFIX}/rag/debug",
+    "report_generate": f"{API_V1_PREFIX}/report/generate",
+    "report_metrics": f"{API_V1_PREFIX}/report/metrics",
+    "ragas_dataset": f"{API_V1_PREFIX}/ragas/dataset",
+}
+
+
+def get_api_url(endpoint_name: str) -> str:
+    if endpoint_name not in RAG_ENDPOINTS:
+        raise ValueError(f"Endpoint no registrado: {endpoint_name}")
+
+    if not RAG_API_BASE_URL:
+        return ""
+
+    return f"{RAG_API_BASE_URL}{RAG_ENDPOINTS[endpoint_name]}"
 
 # ─── Reportes PDF ────────────────────────────────────────────────────────────
 REPORTS_DIR = os.path.join(OUTPUT_DIR, "reports")

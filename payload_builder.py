@@ -240,14 +240,27 @@ def build_endpoint_payload(
         location_obj = defect.get("location", {})
         dimensions = defect.get("dimensions", {})
 
+        width_mm = dimensions.get("width_mm")
+        height_mm = dimensions.get("height_mm")
+        area_mm2 = dimensions.get("area_mm2")
+
+        if width_mm is None:
+            width_mm = round(float(dimensions.get("width_px", 0.0)), 3)
+
+        if height_mm is None:
+            height_mm = round(float(dimensions.get("height_px", 0.0)), 3)
+
+        if area_mm2 is None:
+            area_mm2 = round(width_mm * height_mm, 4)
+
         detections.append({
             "severity": str(defect.get("severity", "UNKNOWN")).upper(),
             "defect_class": normalize_endpoint_defect_class(defect.get("defect_type", "")),
             "confidence": round(float(defect.get("confidence", 0.0)), 3),
             "location": location_obj.get("zone", "unknown"),
-            "width_mm": dimensions.get("width_mm"),
-            "height_mm": dimensions.get("height_mm"),
-            "area_mm2": dimensions.get("area_mm2"),
+            "width_mm": width_mm,
+            "height_mm": height_mm,
+            "area_mm2": area_mm2,
             "reference": defect.get("ipc_reference", standard_target),
         })
 

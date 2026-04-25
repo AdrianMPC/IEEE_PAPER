@@ -1,7 +1,9 @@
-uploaded_images/
 __pycache__/
 *.pyc
 .env
 /venv/
-models/
+
+.streamlit/secrets.toml
+models/*.pt
 outputs/
+uploaded_images/
