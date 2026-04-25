@@ -21,6 +21,48 @@ from payload_builder import (
 )
 from rag_api_client import send_to_rag_api
 from report_pdf import build_pdf_report
+import fitz
+
+def render_pdf_preview(pdf_path: str, zoom: float = 1.8):
+    doc = fitz.open(pdf_path)
+    total_pages = len(doc)
+
+    if "pdf_page_index" not in st.session_state:
+        st.session_state["pdf_page_index"] = 0
+
+    page_index = st.session_state["pdf_page_index"]
+    page_index = max(0, min(page_index, total_pages - 1))
+
+    col_prev, col_info, col_next = st.columns([1, 2, 1])
+
+    with col_prev:
+        if st.button("⬅️ Anterior", disabled=page_index == 0, key="pdf_prev"):
+            st.session_state["pdf_page_index"] -= 1
+            st.rerun()
+
+    with col_info:
+        st.markdown(
+            f"<div style='text-align:center; font-weight:600;'>Página {page_index + 1} de {total_pages}</div>",
+            unsafe_allow_html=True,
+        )
+
+    with col_next:
+        if st.button("Siguiente ➡️", disabled=page_index >= total_pages - 1, key="pdf_next"):
+            st.session_state["pdf_page_index"] += 1
+            st.rerun()
+
+    page = doc[page_index]
+    matrix = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=matrix, alpha=False)
+    img_bytes = pix.tobytes("png")
+
+    st.image(
+        img_bytes,
+        caption=f"Vista previa — Página {page_index + 1}",
+        width="stretch",
+    )
+
+    doc.close()
 
 # ─── Configuración de página ──────────────────────────────────────────────────
 st.set_page_config(
@@ -221,7 +263,7 @@ st.markdown("---")
 
 # ── Imagen anotada ────────────────────────────────────────────────────────────
 st.subheader("🖼️ Imagen anotada")
-st.image(annotated_rgb, caption=f"PCB ID: {pcb_id}", use_container_width=True)
+st.image(annotated_rgb, caption=f"PCB ID: {pcb_id}", width="stretch")
 
 st.markdown("---")
 
@@ -325,9 +367,9 @@ else:
             st.error(f"❌ Error al generar reporte, Status code: {result.get('status_code')}")
             st.error(f"Detalle: {result.get('error')}")
 
-    if st.session_state.get("rag_response"):
-        st.subheader("🧾 Respuesta de la API RAG")
-        st.json(st.session_state["rag_response"])
+    if st.session_state.get("pdf_path"):
+        st.subheader("📑 Vista previa del reporte PDF")
+        render_pdf_preview(st.session_state["pdf_path"], zoom=1.8)
 
     if st.session_state.get("pdf_path"):
         with open(st.session_state["pdf_path"], "rb") as pdf_file:
