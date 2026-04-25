@@ -3,6 +3,8 @@
 # =============================================================================
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # ─── Rutas del proyecto ───────────────────────────────────────────────────────
 BASE_DIR           = os.path.dirname(os.path.abspath(__file__))

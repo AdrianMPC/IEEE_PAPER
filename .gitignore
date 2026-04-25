@@ -2,3 +2,6 @@ uploaded_images/
 __pycache__/
 *.pyc
 .env
+/venv/
+models/
+outputs/

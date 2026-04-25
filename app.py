@@ -14,18 +14,10 @@ from inference import (
     save_annotated_image
 )
 from rag_utils import build_rag_prompt
-from utils import (
-    save_uploaded_image,
-    save_payload_json,
-    save_rag_prompt,
-    generate_pcb_id,
-    save_delivery_payload_json
-)
-from api_client import send_to_endpoint
+from utils import save_uploaded_image, save_payload_json, save_rag_prompt, generate_pcb_id
 from payload_builder import (
     enrich_yolo_results,
     build_endpoint_payload,
-    build_delivery_payload,
 )
 from rag_api_client import send_to_rag_api
 from report_pdf import build_pdf_report
@@ -93,14 +85,14 @@ with st.sidebar:
         pcb_h = config.PCB_HEIGHT_MM
 
     st.markdown("---")
-    st.subheader("🌐 Endpoint del equipo")
+    st.subheader("🌐 API RAG")
 
-    endpoint_url = st.text_input(
-        "URL del endpoint",
-        value="",
-        placeholder="https://api.equipo.com/inspect",
-        help="URL a la que se enviará el payload al hacer clic en 'Enviar al endpoint'.",
-    )
+    rag_api_url = st.secrets.get("RAG_API_URL", config.RAG_API_URL)
+
+    if rag_api_url:
+        st.success("API RAG configurada")
+    else:
+        st.error("API RAG no configurada. Define RAG_API_URL en .env o Streamlit secrets.")
 
     board_side = st.selectbox(
         "Cara de la PCB",
@@ -180,17 +172,10 @@ with st.spinner("Procesando imagen..."):
     # 7. Payload para el endpoint
     inspection_payload = build_endpoint_payload(
         enriched_payload=payload,
+        annotated_image_path=annotated_path,
         product_class=product_class,
         board_side=board_side,
     )
-
-    delivery_payload = build_delivery_payload(
-        inspection_payload=inspection_payload,
-        annotated_image_path=annotated_path,
-    )
-    
-    save_delivery_payload_json(delivery_payload, pcb_id)
-
 
 # ─── Resultados ───────────────────────────────────────────────────────────────
 status = payload["overall_status"]
@@ -267,15 +252,6 @@ with st.expander("📤 Payload del endpoint (formato del equipo)"):
         mime="application/json",
     )
 
-with st.expander("🚚 Payload de envío (JSON + ruta imagen labelada)"):
-    st.json(delivery_payload)
-    st.download_button(
-        label="⬇️ Descargar payload de envío",
-        data=json.dumps(delivery_payload, indent=2, ensure_ascii=False),
-        file_name=f"{pcb_id}_delivery_payload.json",
-        mime="application/json",
-    )
-
 # ── Prompt RAG ────────────────────────────────────────────────────────────────
 with st.expander("🤖 Prompt para el RAG Chatbot"):
     st.text_area("Prompt", value=rag_prompt, height=300, label_visibility="collapsed")
@@ -289,46 +265,60 @@ with st.expander("🤖 Prompt para el RAG Chatbot"):
 st.markdown("---")
 
 # ── Ajuste 4: Envío al endpoint ───────────────────────────────────────────────
-st.subheader("🚀 Enviar al endpoint")
+st.subheader("📄 Generar reporte técnico con RAG")
 
-if not endpoint_url:
-    st.info("Configura la URL del endpoint en el sidebar para habilitar el envío.")
+if not rag_api_url:
+    st.error("No se puede generar el reporte porque RAG_API_URL no está configurado.")
 else:
-    if not pcb_dims_known:
-        st.warning("⚠️ Las dimensiones físicas no están definidas. El payload enviará `width_mm`, `height_mm` y `area_mm2` como `null`.")
-
-    # Pregunta opcional al RAG antes de enviar
     user_question = st.text_input(
         "Pregunta para el RAG (opcional)",
         placeholder="¿Qué acción correctiva recomiendas para los defectos críticos?",
     )
 
-    if st.button("📡 Enviar al endpoint", type="primary"):
-        # Reconstruir endpoint_payload con la pregunta si se ingresó una
+    if st.button("📡 Generar reporte RAG", type="primary"):
+
         final_inspection_payload = build_endpoint_payload(
             enriched_payload=payload,
+            annotated_image_path=annotated_path,
             standard_target="IPC-A-600",
             product_class=product_class,
             board_side=board_side,
             user_question=user_question if user_question.strip() else None,
         )
 
-        final_delivery_payload = build_delivery_payload(
-            inspection_payload=final_inspection_payload,
-            annotated_image_path=annotated_path,
-        )
-
-        with st.spinner(f"Enviando a {endpoint_url}..."):
-            result = send_to_endpoint(
-                endpoint_payload=final_delivery_payload,
-                endpoint_url=endpoint_url,
+        with st.spinner("Consultando API RAG..."):
+            result = send_to_rag_api(
+                payload=final_inspection_payload,
+                rag_url=rag_api_url,
+                timeout=config.RAG_API_TIMEOUT,
             )
 
         if result["success"]:
-            st.success(f"✅ Enviado correctamente (HTTP {result['status_code']})")
-            st.json(result["response"])
+            st.success(f"✅ Reporte generado correctamente HTTP {result['status_code']}")
+
+            rag_response = result["response"]
+
+            st.subheader("🧾 Respuesta de la API RAG")
+            st.json(rag_response)
+
+            pdf_path = f"{config.REPORTS_DIR}/{pcb_id}_inspection_report.pdf"
+
+            build_pdf_report(
+                rag_response=rag_response,
+                inspection_payload=final_inspection_payload,
+                annotated_image_path=annotated_path,
+                output_path=pdf_path,
+            )
+
+            with open(pdf_path, "rb") as pdf_file:
+                st.download_button(
+                    label="⬇️ Descargar reporte PDF",
+                    data=pdf_file,
+                    file_name=f"{pcb_id}_inspection_report.pdf",
+                    mime="application/pdf",
+                )
         else:
-            st.error(f"❌ Error al enviar: {result['error']}")
+            st.error(f"❌ Error al generar reporte: {result['error']}")
 
 st.markdown("---")
 st.caption(f"Inspection ID: `{pcb_id}` | Timestamp: {payload['timestamp']}")
