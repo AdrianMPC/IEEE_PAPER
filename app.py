@@ -6,15 +6,29 @@ import json
 import streamlit as st
 
 import config
-from inference       import ensure_model_exists, load_model, run_inference, get_annotated_image, save_annotated_image
-from rag_utils       import build_rag_prompt
-from utils           import save_uploaded_image, save_payload_json, save_rag_prompt, generate_pcb_id, save_delivery_payload_json
-from api_client      import send_to_endpoint
+from inference import (
+    ensure_model_exists,
+    load_model,
+    run_inference,
+    get_annotated_image,
+    save_annotated_image
+)
+from rag_utils import build_rag_prompt
+from utils import (
+    save_uploaded_image,
+    save_payload_json,
+    save_rag_prompt,
+    generate_pcb_id,
+    save_delivery_payload_json
+)
+from api_client import send_to_endpoint
 from payload_builder import (
     enrich_yolo_results,
     build_endpoint_payload,
     build_delivery_payload,
 )
+from rag_api_client import send_to_rag_api
+from report_pdf import build_pdf_report
 
 # ─── Configuración de página ──────────────────────────────────────────────────
 st.set_page_config(

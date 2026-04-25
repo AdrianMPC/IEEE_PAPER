@@ -224,11 +224,16 @@ def normalize_endpoint_defect_class(name: str) -> str:
 
 def build_endpoint_payload(
     enriched_payload: dict,
+    annotated_image_path: str | None = None,
     product_class: str = "unknown",
     board_side: str = "top",
     user_question=None,
     standard_target: str = "IPC-A-600",
 ) -> dict:
+    """
+    Builder endpoint payload from enriched payload, normalizing defect classes and selecting
+    relevant fields for the API contract.
+    """
     detections = []
 
     for defect in enriched_payload.get("defects", []):
@@ -247,6 +252,7 @@ def build_endpoint_payload(
         })
 
     return {
+        "path_to_labeled_img": annotated_image_path,
         "detections": detections,
         "standard_target": standard_target,
         "product_class": product_class,

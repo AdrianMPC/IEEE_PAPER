@@ -10,14 +10,22 @@ MODEL_PATH         = os.path.join(BASE_DIR, "models", "small_11.pt")
 DATA_YAML_PATH     = os.path.join(BASE_DIR, "models", "data.yaml")
 
 # ─── Descarga automática del modelo (Ajuste 3) ────────────────────────────────
-MODEL_GDRIVE_ID = os.getenv("MODEL_GDRIVE_ID")   
+MODEL_GDRIVE_ID = os.getenv("MODEL_GDRIVE_ID")
 UPLOADED_IMG_DIR   = os.path.join(BASE_DIR, "uploaded_images")
 OUTPUT_DIR         = os.path.join(BASE_DIR, "outputs")
 ANNOTATED_DIR      = os.path.join(OUTPUT_DIR, "annotated")
 JSON_DIR           = os.path.join(OUTPUT_DIR, "json")
 
+# ─── API RAG ─────────────────────────────────────────────────────────────────
+RAG_API_URL = os.getenv("RAG_API_URL", "")
+RAG_API_TIMEOUT = int(os.getenv("RAG_API_TIMEOUT", "90"))
+
+# ─── Reportes PDF ────────────────────────────────────────────────────────────
+REPORTS_DIR = os.path.join(OUTPUT_DIR, "reports")
+os.makedirs(REPORTS_DIR, exist_ok=True)
+
 # Crear carpetas si no existen
-for _dir in [UPLOADED_IMG_DIR, ANNOTATED_DIR, JSON_DIR]:
+for _dir in [UPLOADED_IMG_DIR, ANNOTATED_DIR, JSON_DIR, REPORTS_DIR]:
     os.makedirs(_dir, exist_ok=True)
 
 # ─── Parámetros de inferencia YOLO ───────────────────────────────────────────
