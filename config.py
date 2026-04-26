@@ -3,9 +3,7 @@
 # =============================================================================
 
 import os
-from dotenv import load_dotenv
 import streamlit as st
-load_dotenv()
 
 # ─── Rutas del proyecto ───────────────────────────────────────────────────────
 BASE_DIR           = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +11,7 @@ MODEL_PATH         = os.path.join(BASE_DIR, "models", "small_11.pt")
 DATA_YAML_PATH     = os.path.join(BASE_DIR, "models", "data.yaml")
 
 # ─── Descarga automática del modelo (Ajuste 3) ────────────────────────────────
-MODEL_GDRIVE_ID = st.secrets.get("MODEL_GDRIVE_ID", os.getenv("MODEL_GDRIVE_ID"))
+MODEL_GDRIVE_ID = st.secrets.get("MODEL_GDRIVE_ID", os.getenv("MODEL_GDRIVE_ID", None))
 UPLOADED_IMG_DIR   = os.path.join(BASE_DIR, "uploaded_images")
 OUTPUT_DIR         = os.path.join(BASE_DIR, "outputs")
 ANNOTATED_DIR      = os.path.join(OUTPUT_DIR, "annotated")
